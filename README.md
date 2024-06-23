@@ -355,3 +355,169 @@ func TestShortLinkGenerator(t *testing.T) {
 }
 ```
 
+---
+
+now we'll begin to code the APIs, to be specific 2 main endpoints to our API service:
+
+- one endpoint that will be used to generate a short url and return it, when the initial long url is provided. `/create-short-url`
+
+- the other one will be used to provide the actual redirection from the shortend version to the original longer URL `/:short-url`
+
+### 1. Handlers and endpoints
+
+#### 1.1. setup and definitions
+
+lets create our `handler` package and define our handers functions in there.
+
+create a folder called `handler` with a `handler.go` file.
+
+after that's done, lets define our handlers stubs.
+
+```
+package handler
+
+import "github.com/gin-gonic/gin"
+
+func CreateShortUrl(c *gin.Context) {
+
+}
+
+func HandleShortUrlRedirects(c *gin.Context) {
+	
+}
+```
+
+after that's done, we go to the `main.go` file and add our **endpoints**.
+
+```
+package main
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/eDyrr/url-shortener/handler"
+	"github.com/eDyrr/url-shortener/store"
+	"github.com/gin-gonic/gin"
+)
+
+func main() {
+	r := gin.Default()
+
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "hey Go URL shortener",
+		})
+	})
+
+	r.POST("/create-short-url", func(c *gin.Context) {
+		handler.CreateShortUrl(c)
+	})
+
+	r.GET("/:short-url", func(c *gin.Context) {
+		handler.HandleShortUrlRedirects(c)
+	})
+
+	store.InitializeStore()
+	err := r.Run(":9808")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to start the web server - Error %v", err))
+	}
+}
+```
+
+#### 1.2. Implementations
+
+now its time to write the implementation code.
+
+**STEP 1**: implement the `CreateShortUrl()` handler function:
+
+- recieve creation request body, parse it then extract the initial long url and the userId.
+
+- call `shortener.GenerateShortLink()` that we implemented and generate our shortened hash.
+
+- finally store the mapping of our output `hash/shortUrl` with the initial long url, here, we will be using the `store.SaveUrlMapping()` we implemented.
+
+```
+package handler
+
+import (
+	"net/http"
+
+	"github.com/eDyrr/url-shortener/shortener"
+	"github.com/eDyrr/url-shortener/store"
+	"github.com/gin-gonic/gin"
+)
+
+type UrlCreationRequest struct {
+	LongUrl string `json:"long_url" binding:"required"`
+	UserId  string `json:"user_id" binding:"required"`
+}
+
+func CreateShortUrl(c *gin.Context) {
+	var creationRequest UrlCreationRequest
+	if err := c.ShouldBindJSON(&creationRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	shortUrl := shortener.GeneratedShortLink(creationRequest.LongUrl, creationRequest.UserId)
+	store.SaveUrlMapping(shortUrl, creationRequest.LongUrl, creationRequest.UserId)
+
+	host := "http://localhost:9808/"
+	c.JSON(200, gin.H{
+		"message":   "short url created successfully",
+		"short_url": host + shortUrl,
+	})
+}
+```
+
+**STEP 2**: the second and last step will be about implementing the redirection handler, `handleShortUrlRedirect()`, it will consist of:
+
+- getting the short url from the path parameter `/:shortUrl`
+
+- call the store to retrieve the initial url that corresponds to the short one provided in the path.
+
+- and finally apply the http redirection function.
+
+```
+func HandleShortUrlRedirects(c *gin.Context) {
+	shortUrl := c.Param("shortUrl")
+	initialUrl := store.RetrieveInitialUrl(shortUrl)
+	c.Redirect(302, initialUrl)
+}
+```
+
+### 2. Testing
+
+after finishing the handlers, now lets test them.
+
+- **Step 1**: run/start the project (`main.go` file is the entry point).
+
+```
+{"message":"hey Go URL shortener"}
+```
+
+- **Step 2**: request url shortening action.
+
+we can post the request body below to the specified endpoing.
+
+```
+curl --request POST \
+--data '{
+    "long_url": "https://www.guru3d.com/news-story/spotted-ryzen-threadripper-pro-3995wx-processor-with-8-channel-ddr4,2.html",
+    "user_id" : "e0dba740-fc4b-4977-872c-d360239e6b10"
+}' \
+  http://localhost:9808/create-short-url
+```
+
+here's the output:
+
+```
+{
+    "message": "short url created successfully",
+    "short_url": "http://localhost:9808/9Zatkhpi"
+}
+```
+
+**Step 3**: testing the redirection
